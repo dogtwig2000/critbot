@@ -16,14 +16,17 @@ async function speak(text, persona) {
   const key = process.env.ELEVENLABS_API_KEY;
   const v = VOICES[persona];
   if (!key || !v || !v.voice_id || v.voice_id.startsWith('PASTE')) return null;
-  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${v.voice_id}`, {
+  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${v.voice_id}/with-timestamps`, {
     method: 'POST',
-    headers: { 'xi-api-key': key, 'content-type': 'application/json', accept: 'audio/mpeg' },
+    headers: { 'xi-api-key': key, 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({ text, model_id: ELEVEN_MODEL, voice_settings: v.settings })
   });
-  if (!r.ok) return null;                       // any voice error -> silently fall back to system voice
-  const buf = Buffer.from(await r.arrayBuffer());
-  return buf.toString('base64');
+  if (!r.ok) return null;
+  const data = await r.json();
+  return {
+    audio: data.audio_base64,
+    alignment: data.alignment   // { characters, character_start_times_seconds, character_end_times_seconds }
+  };
 }
 
 const PROMPTS = {
@@ -71,8 +74,8 @@ export default async function handler(req, res) {
     const data = await r.json();
     if (!r.ok) return res.status(r.status).json({ error: data.error?.message || 'api error' });
     const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
-    const audio = await speak(text, persona);   // null until ElevenLabs key + voice ID are set
-    res.status(200).json({ text, audio });
+    const result = await speak(text, persona);
+    res.status(200).json({ text, audio: result?.audio || null, alignment: result?.alignment || null });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
