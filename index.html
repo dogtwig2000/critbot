@@ -94,8 +94,13 @@
     font-size:clamp(16px,4.3vw,19px);line-height:1.4;
     font-weight:400;color:var(--paper);
   }
-  .line .w{opacity:0;transition:opacity .15s ease}
-  .line .w.on{opacity:1}
+  .line .w{
+    opacity:0;
+    display:inline-block;
+    max-height:0;overflow:hidden;
+    transition:opacity .12s ease;
+  }
+  .line .w.on{opacity:1;max-height:none;overflow:visible;}
   .line.monkey{font-style:italic;opacity:.94}
   .line.fan .pro{font-style:italic}
   .placeholder{color:var(--haze);font-family:'Inter',sans-serif;font-size:14px;font-style:normal}
