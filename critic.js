@@ -1,5 +1,30 @@
-// api/critic.js  — runs on Vercel, holds your key, never sent to the phone.
-// The three voices live here so you can tweak them and just re-push.
+// api/critic.js  — runs on Vercel, holds your keys, never sent to the phone.
+// The three voices' personalities live here so you can tweak them and just re-push.
+
+// ---- ElevenLabs voices ----
+// Paste a voice ID from your ElevenLabs Voice Library into each slot below.
+// (In ElevenLabs: My Voices / Voice Library -> click a voice -> "ID".)
+// Until you paste a real ID, that critic falls back to the phone's system voice.
+const VOICES = {
+  monkey:    { voice_id: 'PASTE_MONKEY_VOICE_ID',    settings: { stability: 0.45, similarity_boost: 0.75, style: 0.35, use_speaker_boost: true } },
+  professor: { voice_id: 'PASTE_PROFESSOR_VOICE_ID', settings: { stability: 0.65, similarity_boost: 0.75, style: 0.20, use_speaker_boost: true } },
+  fan:       { voice_id: 'PASTE_FAN_VOICE_ID',       settings: { stability: 0.50, similarity_boost: 0.80, style: 0.45, use_speaker_boost: true } },
+};
+const ELEVEN_MODEL = 'eleven_multilingual_v2'; // highest quality; swap to 'eleven_v3' to experiment with expressive tags
+
+async function speak(text, persona) {
+  const key = process.env.ELEVENLABS_API_KEY;
+  const v = VOICES[persona];
+  if (!key || !v || !v.voice_id || v.voice_id.startsWith('PASTE')) return null;
+  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${v.voice_id}`, {
+    method: 'POST',
+    headers: { 'xi-api-key': key, 'content-type': 'application/json', accept: 'audio/mpeg' },
+    body: JSON.stringify({ text, model_id: ELEVEN_MODEL, voice_settings: v.settings })
+  });
+  if (!r.ok) return null;                       // any voice error -> silently fall back to system voice
+  const buf = Buffer.from(await r.arrayBuffer());
+  return buf.toString('base64');
+}
 
 const PROMPTS = {
   monkey: `You are the Monkey — the voice of the inner critic, looking at a drawing the user just made. React to what you ACTUALLY SEE: the specific subject, the wobbly bits, the choices. Never generic.
@@ -46,7 +71,8 @@ export default async function handler(req, res) {
     const data = await r.json();
     if (!r.ok) return res.status(r.status).json({ error: data.error?.message || 'api error' });
     const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
-    res.status(200).json({ text });
+    const audio = await speak(text, persona);   // null until ElevenLabs key + voice ID are set
+    res.status(200).json({ text, audio });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
