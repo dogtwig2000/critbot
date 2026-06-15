@@ -276,76 +276,97 @@ function setAccent(p){
 }
 
 /* ---- the brain ---- */
-async function runCritic(p){
-  stopSpeak();
-  lineEl.className='line';
-  lineEl.innerHTML='<span class="thinking">…</span>';
-  let text;
-  try{
-    const res=await fetch('/api/critic',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({persona:p,image:imageB64})
-    });
-    if(!res.ok) throw new Error('no proxy');
-    const data=await res.json();
-    text=(data.text||'').trim();
-  }catch(e){
-    // Fallback so you can see the flow before the server is wired up.
-    text=DEMO[p];
-    lineEl.dataset.demo='1';
-  }
-  if(active!==p) return; // user switched while waiting
-  speakAndReveal(text,p);
-}
-
 const DEMO={
   monkey:"Well. You're certainly not an artist.",
   professor:"What we have here is, ostensibly, a drawing — though I'd resist the figurative reading and attend instead to the triangular armature implied by the negative space, which recalls, if distantly, early Balthus before his turn toward the —",
   fan:"Oh, I love this. There's so much life in that line — how did you even do that? You should keep it."
 };
 
-/* ---- speech + word reveal ---- */
-let utter=null;
-function primeTTS(){ // iOS needs a gesture-triggered warm-up
+async function runCritic(p){
+  stopSpeak();
+  lineEl.className='line';
+  lineEl.innerHTML='<span class="thinking">…</span>';
+  let text=null, audio=null;
+  try{
+    const res=await fetch('/api/critic',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({persona:p,image:imageB64})
+    });
+    if(!res.ok) throw new Error('no brain');
+    const data=await res.json();
+    text=(data.text||'').trim();
+    audio=data.audio||null;        // base64 mp3 from ElevenLabs, when wired up
+  }catch(e){
+    text=DEMO[p];                  // demo line until the brain is connected
+  }
+  if(active!==p) return;           // user switched critics while waiting
+  renderWords(text,p);
+  if(audio && actx){
+    try{ await playMp3(audio); return; }catch(e){}
+  }
+  speakFallback(text,p);           // system voice if there's no ElevenLabs audio
+}
+
+/* ---- audio + word reveal ---- */
+let utter=null, actx=null, curSrc=null, revealTimer=null;
+let spans=[], shown=0;
+
+function primeTTS(){ // unlock audio on a user gesture (needed on iOS)
+  try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended')actx.resume(); }catch(e){}
   if(ttsReady||!window.speechSynthesis)return;
   try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);ttsReady=true;}catch(e){}
 }
-function stopSpeak(){ if(window.speechSynthesis)speechSynthesis.cancel(); }
+
+function stopSpeak(){
+  if(window.speechSynthesis)speechSynthesis.cancel();
+  if(curSrc){try{curSrc.stop()}catch(e){} curSrc=null;}
+  if(revealTimer){clearInterval(revealTimer);revealTimer=null;}
+}
+
+function renderWords(text,p){
+  lineEl.className='line '+p;
+  const parts=text.split(/(\s+)/);
+  lineEl.innerHTML=parts.map(w=>/\s+/.test(w)?w:`<span class="w">${w}</span>`).join('');
+  spans=[...lineEl.querySelectorAll('.w')];
+  shown=0;
+}
+function revealTo(i){ for(;shown<=i&&shown<spans.length;shown++) spans[shown].classList.add('on'); if(card)card.scrollTop=card.scrollHeight; }
+function revealOver(ms){
+  if(!spans.length)return;
+  const step=Math.max(60, ms/spans.length);
+  let t=0; revealTimer=setInterval(()=>{ revealTo(t); t++; if(t>=spans.length){clearInterval(revealTimer);revealTimer=null;} }, step);
+}
+
+async function playMp3(b64){
+  const bin=atob(b64), bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  const buf=await actx.decodeAudioData(bytes.buffer);
+  const src=actx.createBufferSource(); src.buffer=buf; src.connect(actx.destination);
+  curSrc=src;
+  revealOver(buf.duration*1000);
+  src.onended=()=>{ revealTo(spans.length-1); if(curSrc===src)curSrc=null; };
+  src.start();
+}
 
 function pickVoice(p){
+  if(!window.speechSynthesis)return null;
   const v=speechSynthesis.getVoices().filter(v=>v.lang.startsWith('en'));
   if(!v.length)return null;
   if(p==='fan')return v.find(x=>/female|samantha|victoria|karen|moira|tessa|zira/i.test(x.name))||v[0];
   if(p==='professor')return v.find(x=>/uk|british|daniel|arthur|george|oliver/i.test(x.name+x.lang))||v[0];
-  return v.find(x=>/male|daniel|fred|alex/i.test(x.name))||v[0]; // monkey
+  return v.find(x=>/male|daniel|fred|alex/i.test(x.name))||v[0];
 }
-
-function speakAndReveal(text,p){
-  // render words
-  lineEl.className='line '+p;
-  lineEl.dataset.demo='';
-  const words=text.split(/(\s+)/);
-  lineEl.innerHTML=words.map(w=>/\s+/.test(w)?w:`<span class="w">${w}</span>`).join('');
-  const spans=[...lineEl.querySelectorAll('.w')];
-  let shown=0;
-  const revealTo=i=>{ for(;shown<=i&&shown<spans.length;shown++) spans[shown].classList.add('on'); if(card)card.scrollTop=card.scrollHeight; };
-
-  if(!window.speechSynthesis){ // no TTS — timed reveal
-    spans.forEach((s,i)=>setTimeout(()=>s.classList.add('on'),i*140));
-    return;
-  }
-  stopSpeak();
+function speakFallback(text,p){
+  if(!window.speechSynthesis){ revealOver(text.split(/\s+/).length*220); return; }
+  const cfg=PERSONA[p];
   utter=new SpeechSynthesisUtterance(text);
-  const cfg=PERSONA[p];utter.rate=cfg.rate;utter.pitch=cfg.pitch;
+  utter.rate=cfg.rate;utter.pitch=cfg.pitch;
   const v=pickVoice(p);if(v)utter.voice=v;
-
   let wordIdx=0;
   utter.onboundary=e=>{ if(e.name==='word'||e.charIndex!=null){ revealTo(wordIdx); wordIdx++; } };
-  utter.onend=()=>revealTo(spans.length-1);
-  // timer fallback in case onboundary doesn't fire (iOS)
   const est=Math.max(120, 60000/(170*cfg.rate));
-  let t=0;const timer=setInterval(()=>{ if(wordIdx<=t){revealTo(t);} t++; if(t>=spans.length)clearInterval(timer); },est);
-  utter.onend=()=>{clearInterval(timer);revealTo(spans.length-1);};
+  let t=0; revealTimer=setInterval(()=>{ if(wordIdx<=t)revealTo(t); t++; if(t>=spans.length){clearInterval(revealTimer);revealTimer=null;} },est);
+  utter.onend=()=>{ if(revealTimer){clearInterval(revealTimer);revealTimer=null;} revealTo(spans.length-1); };
   speechSynthesis.speak(utter);
 }
 
