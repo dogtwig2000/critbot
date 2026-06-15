@@ -354,7 +354,7 @@ function startCaptionSync(wordTimings){
   function frame(){
     const elapsed=actx.currentTime-t0;
     while(r<wordTimings.length && wordTimings[r]<=elapsed){
-      if(spans[r]) spans[r].classList.add('on');
+      if(spans[r]) { spans[r].classList.add('on'); if(card) card.scrollTop=card.scrollHeight; }
       r++;
     }
     if(r<wordTimings.length) rafId=requestAnimationFrame(frame);
