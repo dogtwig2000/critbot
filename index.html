@@ -286,7 +286,7 @@ async function runCritic(p){
   stopSpeak();
   lineEl.className='line';
   lineEl.innerHTML='<span class="thinking">…</span>';
-  let text=null, audio=null;
+  let text=null, audio=null, alignment=null;
   try{
     const res=await fetch('/api/critic',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -295,23 +295,24 @@ async function runCritic(p){
     if(!res.ok) throw new Error('no brain');
     const data=await res.json();
     text=(data.text||'').trim();
-    audio=data.audio||null;        // base64 mp3 from ElevenLabs, when wired up
+    audio=data.audio||null;
+    alignment=data.alignment||null;
   }catch(e){
-    text=DEMO[p];                  // demo line until the brain is connected
+    text=DEMO[p];
   }
-  if(active!==p) return;           // user switched critics while waiting
+  if(active!==p) return;
   renderWords(text,p);
   if(audio && actx){
-    try{ await playMp3(audio); return; }catch(e){}
+    try{ await playMp3(audio, alignment); return; }catch(e){ console.warn('mp3 failed',e); }
   }
-  speakFallback(text,p);           // system voice if there's no ElevenLabs audio
+  speakFallback(text,p);
 }
 
 /* ---- audio + word reveal ---- */
-let utter=null, actx=null, curSrc=null, revealTimer=null;
+let utter=null, actx=null, curSrc=null, rafId=null;
 let spans=[], shown=0;
 
-function primeTTS(){ // unlock audio on a user gesture (needed on iOS)
+function primeTTS(){
   try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended')actx.resume(); }catch(e){}
   if(ttsReady||!window.speechSynthesis)return;
   try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u);ttsReady=true;}catch(e){}
@@ -320,7 +321,7 @@ function primeTTS(){ // unlock audio on a user gesture (needed on iOS)
 function stopSpeak(){
   if(window.speechSynthesis)speechSynthesis.cancel();
   if(curSrc){try{curSrc.stop()}catch(e){} curSrc=null;}
-  if(revealTimer){clearInterval(revealTimer);revealTimer=null;}
+  if(rafId){cancelAnimationFrame(rafId);rafId=null;}
 }
 
 function renderWords(text,p){
@@ -329,23 +330,58 @@ function renderWords(text,p){
   lineEl.innerHTML=parts.map(w=>/\s+/.test(w)?w:`<span class="w">${w}</span>`).join('');
   spans=[...lineEl.querySelectorAll('.w')];
   shown=0;
-}
-function revealTo(i){ for(;shown<=i&&shown<spans.length;shown++) spans[shown].classList.add('on'); if(card)card.scrollTop=card.scrollHeight; }
-function revealOver(ms){
-  if(!spans.length)return;
-  const step=Math.max(60, ms/spans.length);
-  let t=0; revealTimer=setInterval(()=>{ revealTo(t); t++; if(t>=spans.length){clearInterval(revealTimer);revealTimer=null;} }, step);
+  if(card) card.scrollTop=0;
 }
 
-async function playMp3(b64){
+// Build per-word start times from ElevenLabs character alignment
+function buildWordTimings(text, alignment){
+  if(!alignment) return null;
+  const { characters, character_start_times_seconds } = alignment;
+  const timings=[];
+  let ci=0;
+  for(const word of (text.match(/\S+/g)||[])){
+    while(ci<characters.length && /\s/.test(characters[ci])) ci++;
+    timings.push(character_start_times_seconds[ci]||0);
+    ci+=word.length;
+  }
+  return timings;
+}
+
+// Reveal words via requestAnimationFrame synced to actx.currentTime
+function startCaptionSync(wordTimings){
+  const t0=actx.currentTime;
+  let r=0;
+  function frame(){
+    const elapsed=actx.currentTime-t0;
+    while(r<wordTimings.length && wordTimings[r]<=elapsed){
+      if(spans[r]) spans[r].classList.add('on');
+      r++;
+    }
+    if(r<wordTimings.length) rafId=requestAnimationFrame(frame);
+    else{ spans.forEach(s=>s.classList.add('on')); rafId=null; }
+  }
+  rafId=requestAnimationFrame(frame);
+}
+
+// Timed fallback when no alignment data
+function revealOver(ms){
+  if(!spans.length)return;
+  const step=Math.max(80,ms/spans.length);
+  let t=0;
+  const timer=setInterval(()=>{ if(spans[t]) spans[t].classList.add('on'); t++; if(t>=spans.length) clearInterval(timer); },step);
+}
+
+async function playMp3(b64, alignment){
   const bin=atob(b64), bytes=new Uint8Array(bin.length);
   for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
   const buf=await actx.decodeAudioData(bytes.buffer);
   const src=actx.createBufferSource(); src.buffer=buf; src.connect(actx.destination);
   curSrc=src;
-  revealOver(buf.duration*1000);
-  src.onended=()=>{ revealTo(spans.length-1); if(curSrc===src)curSrc=null; };
   src.start();
+  const wordTimings=buildWordTimings(lineEl.textContent, alignment);
+  if(wordTimings) startCaptionSync(wordTimings);
+  else revealOver(buf.duration*1000);
+  src.onended=()=>{ spans.forEach(s=>s.classList.add('on')); if(curSrc===src)curSrc=null; };
 }
 
 function pickVoice(p){
@@ -362,11 +398,9 @@ function speakFallback(text,p){
   utter=new SpeechSynthesisUtterance(text);
   utter.rate=cfg.rate;utter.pitch=cfg.pitch;
   const v=pickVoice(p);if(v)utter.voice=v;
-  let wordIdx=0;
-  utter.onboundary=e=>{ if(e.name==='word'||e.charIndex!=null){ revealTo(wordIdx); wordIdx++; } };
   const est=Math.max(120, 60000/(170*cfg.rate));
-  let t=0; revealTimer=setInterval(()=>{ if(wordIdx<=t)revealTo(t); t++; if(t>=spans.length){clearInterval(revealTimer);revealTimer=null;} },est);
-  utter.onend=()=>{ if(revealTimer){clearInterval(revealTimer);revealTimer=null;} revealTo(spans.length-1); };
+  revealOver(text.split(/\s+/).length*est);
+  utter.onend=()=>{ spans.forEach(s=>s.classList.add('on')); };
   speechSynthesis.speak(utter);
 }
 
