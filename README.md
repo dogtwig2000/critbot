@@ -1,24 +1,42 @@
-# CritBot — getting it on your phone
+# CritBot
 
 Three files:
-- `index.html` — the app (camera, three voices, captions, speech)
-- `api/critic.js` — a tiny server that holds your key and runs the voices
+- `index.html` — the app (camera, three critics, captions, voices)
+- `api/critic.js` — the server: holds your keys, runs the critic + the voice
 - this readme
 
-## Deploy (about 5 minutes, free)
+## 1. Connect the brain (no terminal needed)
 
-1. Make a free account at **vercel.com** (sign in with GitHub).
-2. Put these files in a folder (keep `api/critic.js` inside an `api` folder — that's what makes it a server function).
-3. Easiest path: install the CLI once in Terminal — `npm i -g vercel` — then from the folder run `vercel`. Follow the prompts. Or: push the folder to a GitHub repo and "Import Project" on vercel.com.
-4. Add your key: Vercel dashboard → your project → **Settings → Environment Variables** → add
-   `ANTHROPIC_API_KEY` = your key (get one at console.anthropic.com).
-   Redeploy after adding it (`vercel --prod`).
+You've already got it on Vercel via GitHub. To make it think:
 
-You'll get a URL like `the-critic.vercel.app`. Open it on your iPhone, allow the camera, point it at a drawing, snap, tap a critic.
+1. Get a key at **console.anthropic.com** → API Keys → Create Key → copy it.
+2. Vercel dashboard → your project → **Settings → Environment Variables**.
+3. Add: name `ANTHROPIC_API_KEY`, value = your key. Save.
+4. **Deployments** tab → newest deployment → "⋯" → **Redeploy**.
+   (The key only loads on the next deploy — adding it alone does nothing.)
+
+Open your Vercel URL on your phone, allow the camera, point at a drawing, pick a critic, tap **Crit**. A real, specific line = brain connected.
+
+## 2. Real voices (ElevenLabs)
+
+1. In ElevenLabs, pick three voices and copy each one's **Voice ID**
+   (click a voice → its ID is on the detail panel). Suggested casting:
+   - **Monkey** — intimate, whispery, close. The voice inside your own head.
+   - **Professor** — plummy, slightly British, unhurried.
+   - **Fan** — warm woman, ~50s, a natural little laugh.
+2. Paste those IDs into the `VOICES` map at the top of `api/critic.js`
+   (replace the `PASTE_…` placeholders). Commit/push to GitHub.
+3. In Vercel → Settings → Environment Variables, add
+   `ELEVENLABS_API_KEY` = your ElevenLabs key. Save, then Redeploy.
+
+Voices switch on automatically. Any voice slot you leave as `PASTE_…`
+falls back to the phone's system voice, so you can wire them one at a time.
+
+Tweak `voice_settings` (stability / style) in `api/critic.js` to taste, or
+swap `ELEVEN_MODEL` to `eleven_v3` to play with expressive audio tags.
 
 ## Notes
 
-- **The key never touches the phone.** It lives in that Vercel setting, server-side. Safe.
-- **Voices right now** are the iPhone's built-in text-to-speech (free, a bit robotic). The whisper / British / mom-chuckle cast needs a real voice service (ElevenLabs) — that slots into the same `api/` folder later. Tell me when you want it.
-- **iPhone speech can be finicky** the first tap. If it doesn't speak, tapping a critic again usually wakes it. If it stays flaky, that's our cue to go to ElevenLabs sooner.
-- Tweak a voice anytime by editing the prompts in `api/critic.js` and re-pushing.
+- **Keys never touch the phone.** They live in Vercel's settings, server-side.
+- **Anyone with the URL spends your credits.** Fine for testing and filming; add a password before sharing widely.
+- Edit any critic's personality in the `PROMPTS` in `api/critic.js`, push, done.
