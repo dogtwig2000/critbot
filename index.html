@@ -94,13 +94,7 @@
     font-size:clamp(16px,4.3vw,19px);line-height:1.4;
     font-weight:400;color:var(--paper);
   }
-  .line .w{
-    opacity:0;
-    display:inline-block;
-    max-height:0;overflow:hidden;
-    transition:opacity .12s ease;
-  }
-  .line .w.on{opacity:1;max-height:none;overflow:visible;}
+  .line .w{ display:inline; }
   .line.monkey{font-style:italic;opacity:.94}
   .line.fan .pro{font-style:italic}
   .placeholder{color:var(--haze);font-family:'Inter',sans-serif;font-size:14px;font-style:normal}
@@ -308,14 +302,14 @@ async function runCritic(p){
   if(active!==p) return;
   renderWords(text,p);
   if(audio && actx){
-    try{ await playMp3(audio, alignment); return; }catch(e){ console.warn('mp3 failed',e); }
+    try{ await playMp3(audio, text, alignment); return; }catch(e){ console.warn('mp3 failed',e); }
   }
   speakFallback(text,p);
 }
 
 /* ---- audio + word reveal ---- */
 let utter=null, actx=null, curSrc=null, rafId=null;
-let spans=[], shown=0;
+let shown=0;
 
 function primeTTS(){
   try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended')actx.resume(); }catch(e){}
@@ -329,13 +323,41 @@ function stopSpeak(){
   if(rafId){cancelAnimationFrame(rafId);rafId=null;}
 }
 
+let wordList=[];
+
 function renderWords(text,p){
   lineEl.className='line '+p;
-  const parts=text.split(/(\s+)/);
-  lineEl.innerHTML=parts.map(w=>/\s+/.test(w)?w:`<span class="w">${w}</span>`).join('');
-  spans=[...lineEl.querySelectorAll('.w')];
+  lineEl.innerHTML='';           // start empty — words appended as spoken
+  wordList=text.match(/\S+/g)||[];
   shown=0;
   if(card) card.scrollTop=0;
+}
+
+function revealNext(){
+  if(shown>=wordList.length) return;
+  if(shown>0) lineEl.appendChild(document.createTextNode(' '));
+  const s=document.createElement('span');
+  s.className='w'; s.textContent=wordList[shown];
+  lineEl.appendChild(s);
+  shown++;
+  if(card) card.scrollTop=card.scrollHeight;
+}
+
+function startCaptionSync(wordTimings){
+  const t0=actx.currentTime;
+  function frame(){
+    const elapsed=actx.currentTime-t0;
+    while(shown<wordTimings.length && wordTimings[shown]<=elapsed) revealNext();
+    if(shown<wordTimings.length) rafId=requestAnimationFrame(frame);
+  }
+  rafId=requestAnimationFrame(frame);
+}
+
+function revealOver(ms){
+  if(!wordList.length) return;
+  const step=Math.max(80, ms/wordList.length);
+  let t=0;
+  const timer=setInterval(()=>{ revealNext(); t++; if(t>=wordList.length) clearInterval(timer); },step);
 }
 
 // Build per-word start times from ElevenLabs character alignment
@@ -352,41 +374,17 @@ function buildWordTimings(text, alignment){
   return timings;
 }
 
-// Reveal words via requestAnimationFrame synced to actx.currentTime
-function startCaptionSync(wordTimings){
-  const t0=actx.currentTime;
-  let r=0;
-  function frame(){
-    const elapsed=actx.currentTime-t0;
-    while(r<wordTimings.length && wordTimings[r]<=elapsed){
-      if(spans[r]) { spans[r].classList.add('on'); if(card) card.scrollTop=card.scrollHeight; }
-      r++;
-    }
-    if(r<wordTimings.length) rafId=requestAnimationFrame(frame);
-    else{ spans.forEach(s=>s.classList.add('on')); rafId=null; }
-  }
-  rafId=requestAnimationFrame(frame);
-}
-
-// Timed fallback when no alignment data
-function revealOver(ms){
-  if(!spans.length)return;
-  const step=Math.max(80,ms/spans.length);
-  let t=0;
-  const timer=setInterval(()=>{ if(spans[t]) spans[t].classList.add('on'); t++; if(t>=spans.length) clearInterval(timer); },step);
-}
-
-async function playMp3(b64, alignment){
+async function playMp3(b64, text, alignment){
   const bin=atob(b64), bytes=new Uint8Array(bin.length);
   for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
   const buf=await actx.decodeAudioData(bytes.buffer);
   const src=actx.createBufferSource(); src.buffer=buf; src.connect(actx.destination);
   curSrc=src;
   src.start();
-  const wordTimings=buildWordTimings(lineEl.textContent, alignment);
+  const wordTimings=buildWordTimings(text, alignment);
   if(wordTimings) startCaptionSync(wordTimings);
   else revealOver(buf.duration*1000);
-  src.onended=()=>{ spans.forEach(s=>s.classList.add('on')); if(curSrc===src)curSrc=null; };
+  src.onended=()=>{ while(shown<wordList.length) revealNext(); if(curSrc===src)curSrc=null; };
 }
 
 function pickVoice(p){
@@ -398,14 +396,14 @@ function pickVoice(p){
   return v.find(x=>/male|daniel|fred|alex/i.test(x.name))||v[0];
 }
 function speakFallback(text,p){
-  if(!window.speechSynthesis){ revealOver(text.split(/\s+/).length*220); return; }
+  if(!window.speechSynthesis){ revealOver(wordList.length*220); return; }
   const cfg=PERSONA[p];
   utter=new SpeechSynthesisUtterance(text);
   utter.rate=cfg.rate;utter.pitch=cfg.pitch;
   const v=pickVoice(p);if(v)utter.voice=v;
   const est=Math.max(120, 60000/(170*cfg.rate));
-  revealOver(text.split(/\s+/).length*est);
-  utter.onend=()=>{ spans.forEach(s=>s.classList.add('on')); };
+  revealOver(wordList.length*est);
+  utter.onend=()=>{ while(shown<wordList.length) revealNext(); };
   speechSynthesis.speak(utter);
 }
 
