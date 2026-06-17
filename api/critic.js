@@ -8,7 +8,7 @@
 const VOICES = {
   monkey:    { voice_id: 'qhH5VOAvpCwvNpmn2srO', settings: { stability: 0.45, similarity_boost: 0.75, style: 0.35, use_speaker_boost: true } },
   professor: { voice_id: 'RDSy0QN68yhrjuOgqzQ4', settings: { stability: 0.65, similarity_boost: 0.75, style: 0.20, use_speaker_boost: true } },
-  fan:       { voice_id: 'y3H6zY6KvCH2pEuQjmv8', settings: { stability: 0.50, similarity_boost: 0.80, style: 0.45, use_speaker_boost: true } },
+  fan:       { voice_id: '3svOJAOhuPHXwQC2H5eq', settings: { stability: 0.50, similarity_boost: 0.80, style: 0.45, use_speaker_boost: true } },
 };
 const ELEVEN_MODEL = 'eleven_multilingual_v2'; // highest quality; swap to 'eleven_v3' to experiment with expressive tags
 
